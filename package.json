@@ -1,0 +1,13 @@
+{
+  "name": "check-group-stylist-availability-prod",
+  "version": "1.0.0",
+  "description": "Check specific stylist availability for multiple services (group bookings) - PRODUCTION",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.2"
+  }
+}
