@@ -133,6 +133,57 @@ function getStylistById(id) {
   return ALL_STYLISTS.find(s => s.id === id);
 }
 
+// ============================================
+// DATE FORMATTING HELPERS
+// Pre-formatted strings so LLM doesn't do date math
+// ============================================
+
+const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December'];
+
+function getOrdinalSuffix(day) {
+  if (day > 3 && day < 21) return 'th';
+  switch (day % 10) {
+    case 1: return 'st';
+    case 2: return 'nd';
+    case 3: return 'rd';
+    default: return 'th';
+  }
+}
+
+function formatDateParts(dateString) {
+  const date = new Date(dateString + (dateString.includes('T') ? '' : 'T12:00:00'));
+  const dayOfWeek = DAYS_OF_WEEK[date.getUTCDay()];
+  const month = MONTHS[date.getUTCMonth()];
+  const dayNum = date.getUTCDate();
+  const dayWithSuffix = `${dayNum}${getOrdinalSuffix(dayNum)}`;
+  return {
+    day_of_week: dayOfWeek,
+    formatted_date: `${month} ${dayWithSuffix}`,
+    formatted_full_date: `${dayOfWeek}, ${month} ${dayWithSuffix}`
+  };
+}
+
+function formatTime(timeString) {
+  const timePart = timeString.split('T')[1];
+  if (!timePart) return 'Time unavailable';
+  const [hourStr, minStr] = timePart.split(':');
+  let hours = parseInt(hourStr, 10);
+  const minutes = parseInt(minStr, 10);
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  const minutesStr = minutes < 10 ? '0' + minutes : minutes;
+  return `${hours}:${minutesStr} ${ampm}`;
+}
+
+function formatSlotFull(timeString) {
+  const dateParts = formatDateParts(timeString);
+  const formattedTime = formatTime(timeString);
+  return `${dateParts.formatted_full_date} at ${formattedTime}`;
+}
+
 let token = null;
 let tokenExpiry = null;
 
@@ -179,14 +230,22 @@ async function scanStylistForService(authToken, stylistId, serviceId, startDate,
 
     const rawData = response.data?.data || [];
     return rawData.flatMap(item =>
-      (item.serviceOpenings || []).map(slot => ({
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        date: slot.date,
-        serviceId: slot.serviceId,
-        serviceName: slot.serviceName,
-        price: slot.employeePrice
-      }))
+      (item.serviceOpenings || []).map(slot => {
+        const dateParts = formatDateParts(slot.startTime);
+        const formattedTime = formatTime(slot.startTime);
+        return {
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          date: slot.date,
+          serviceId: slot.serviceId,
+          serviceName: slot.serviceName,
+          price: slot.employeePrice,
+          day_of_week: dateParts.day_of_week,
+          formatted_date: dateParts.formatted_date,
+          formatted_time: formattedTime,
+          formatted_full: `${dateParts.formatted_full_date} at ${formattedTime}`
+        };
+      })
     );
   } catch (error) {
     console.error(`PRODUCTION: Error scanning stylist:`, error.message);
@@ -295,7 +354,11 @@ app.post('/check', async (req, res) => {
         time: o.startTime,
         end_time: o.endTime,
         service_name: o.serviceName,
-        price: o.price
+        price: o.price,
+        day_of_week: o.day_of_week,
+        formatted_date: o.formatted_date,
+        formatted_time: o.formatted_time,
+        formatted_full: o.formatted_full
       }));
     }
 
@@ -318,13 +381,21 @@ app.post('/check', async (req, res) => {
               service: serviceNames[0],
               time: slot1.time,
               end_time: slot1.end_time,
-              price: slot1.price
+              price: slot1.price,
+              day_of_week: slot1.day_of_week,
+              formatted_date: slot1.formatted_date,
+              formatted_time: slot1.formatted_time,
+              formatted_full: slot1.formatted_full
             },
             guest2: {
               service: serviceNames[1],
               time: slot2.time,
               end_time: slot2.end_time,
-              price: slot2.price
+              price: slot2.price,
+              day_of_week: slot2.day_of_week,
+              formatted_date: slot2.formatted_date,
+              formatted_time: slot2.formatted_time,
+              formatted_full: slot2.formatted_full
             },
             gap_minutes: Math.round(timeDiff),
             total_price: (slot1.price || 0) + (slot2.price || 0)
@@ -360,7 +431,7 @@ app.post('/check', async (req, res) => {
       },
 
       message: hasBackToBack
-        ? `Found ${backToBackOptions.length} back-to-back options with ${stylistDisplayName}. Earliest: ${earliest.guest1.time}`
+        ? `Found ${backToBackOptions.length} back-to-back options with ${stylistDisplayName}. Earliest: ${earliest.guest1.formatted_full}`
         : `${stylistDisplayName} has no back-to-back availability for these services in the date range`
     });
 
@@ -379,8 +450,9 @@ app.get('/health', (req, res) => {
     environment: 'PRODUCTION',
     location: 'Phoenix Encanto',
     service: 'Check Group Stylist Availability',
-    version: '1.0.0',
-    description: 'Check specific stylist availability for multiple services (group back-to-back bookings)'
+    version: '1.1.0',
+    description: 'Check specific stylist availability for multiple services (group back-to-back bookings)',
+    features: ['formatted date fields (day_of_week, formatted_date, formatted_time, formatted_full)']
   });
 });
 
