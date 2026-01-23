@@ -190,13 +190,16 @@ async function getToken() {
 }
 
 // Use smaller 3-hour time windows to bypass Meevo's 8-slot limit
+// 2-hour windows to capture all slots (max 6 per window at 20min intervals)
 const TIME_WINDOWS = [
-  { start: '00:00', end: '09:00' },
-  { start: '09:00', end: '12:00' },
-  { start: '12:00', end: '15:00' },
-  { start: '15:00', end: '18:00' },
-  { start: '18:00', end: '21:00' },
-  { start: '21:00', end: '23:59' }
+  { start: '06:00', end: '08:00' },
+  { start: '08:00', end: '10:00' },
+  { start: '10:00', end: '12:00' },
+  { start: '12:00', end: '14:00' },
+  { start: '14:00', end: '16:00' },
+  { start: '16:00', end: '18:00' },
+  { start: '18:00', end: '20:00' },
+  { start: '20:00', end: '22:00' }
 ];
 
 async function scanStylistForService(authToken, stylistId, serviceId, startDate, endDate, locationId) {
