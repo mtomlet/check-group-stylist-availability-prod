@@ -28,56 +28,55 @@ const CONFIG = {
   LOCATION_ID: '201664'  // Phoenix Encanto
 };
 
-// PRODUCTION Stylist name to ID mapping - Phoenix Encanto (37 stylists)
-const STYLIST_MAP = {
-  // Original 18 stylists
-  'joshua': '159793cd-bf26-4574-afcd-ac08017f2cf8',
-  'josh': '159793cd-bf26-4574-afcd-ac08017f2cf8',
-  'jacob': '2383ab00-8d63-4dac-9945-ac29014110eb',
-  'francisca': '2044a8ce-be0d-4244-8c01-ac47010a2b18',
-  'francis': '2044a8ce-be0d-4244-8c01-ac47010a2b18',
-  'tiffany': '45362667-7c72-4c54-9b56-ac5b00f44d1b',
-  'ashley': '1b0119a5-abe8-444b-b56f-ac5b011095dc',
-  'elizabeth': '71fa4533-7c1b-4195-89ed-ac5b0142182d',
-  'libby': '71fa4533-7c1b-4195-89ed-ac5b0142182d',
-  'liliana': 'fe734b90-c392-48b5-ba4d-ac5b015d71ab',
-  'lily': 'fe734b90-c392-48b5-ba4d-ac5b015d71ab',
-  'frank': '4f185d55-4c46-4fea-bb3c-ac5b0171e6ce',
-  'brittney': '665c58c6-d8f3-4c0c-bfaf-ac5d0004b488',
-  'britt': '665c58c6-d8f3-4c0c-bfaf-ac5d0004b488',
-  'angeleen': 'ee0adc0b-79de-4de9-8fd3-ac5d013c23eb',
-  'angie': 'ee0adc0b-79de-4de9-8fd3-ac5d013c23eb',
-  'keren': '8e916437-8d28-432b-b177-ac5e00dff9b9',
-  'maria': '9b36f80e-0857-4fc6-ad42-ac5e00e6e8d7',
-  'maria elena': '9b36f80e-0857-4fc6-ad42-ac5e00e6e8d7',
-  'mari': '9b36f80e-0857-4fc6-ad42-ac5e00e6e8d7',
-  'saskie': 'f8567bde-87b8-4c3a-831e-ac61015f751b',
-  'melanie': 'a7ef7d83-28d7-4bf5-a934-ac6f011cd3c4',
-  'sarah': 'cbdbf3d3-0531-464f-996b-ac870143b967',
-  'kristina': '5dc967f1-8606-4696-9871-ad4f0110cb33',
-  'kristen': '452b3db2-0e3d-42bb-824f-ad5700082962',
-  'danielle': '1875e266-ba30-48a5-ab3b-ad670141b4d0',
-  // 19 NEW stylists added Jan 2026
-  'ellie': '8b243661-a884-4b9d-8223-ad95012b64dd',
-  'bella': '0ab425dd-7614-4b3e-90bf-adcd00f6e969',
-  'holly': '9c873dfb-b582-4132-a5fe-ae54006282f3',
-  'jackie': '04fa6efa-0a7a-4875-abb3-ae6e010d925c',
-  'mano': 'f800b8c0-5ecc-48c3-81a6-aeec010f012a',
-  'jackiev': '01705d4b-597c-48b2-9391-af7e012ff596',
-  'bianca': 'f1c51a77-6b6f-4ca1-8780-afd9011cf4e9',
-  'maricruz': '389c987f-c7b6-43ac-9cb1-afe3013911ef',
-  'dawnele': 'a566f6d7-62fa-417b-9032-afe70120760e',
-  'harmony': 'e3fe57d4-5745-4f9c-bc93-afe8013d1e40',
-  'mj': '2a543a56-c40f-492c-a2b8-b07b01099ed2',
-  'hannah': '49185114-423f-4c8a-a52e-b0c00129a9e8',
-  'jocelyn': 'a1773d20-8d64-43e1-8cb5-b1560127614b',
-  'ulises': '56f120d3-a76f-43bc-902e-b19f004114a6',
-  'anahi': '466345e1-6b4c-4028-98e3-b1c6011a6d36',
-  'juan': '60aadea7-4962-47ef-97f9-b237011c85e1',
-  'lauren': '3971a6d5-5746-4f30-bdc4-b265013f8707',
-  'eunice': '6c52327c-3aa4-427e-b83a-b26c01410025',
-  'nadia': '097168c0-322c-40b2-a1d7-b28b011bae31'
-};
+// ============================================
+// DYNAMIC ACTIVE EMPLOYEE CACHE (1-hour TTL)
+// ============================================
+let cachedActiveEmployees = null;
+let cachedStylistMap = null;
+let employeeCacheExpiry = null;
+const EMPLOYEE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+async function getActiveEmployees(authToken) {
+  // Return cached if still valid
+  if (cachedActiveEmployees && employeeCacheExpiry && Date.now() < employeeCacheExpiry) {
+    console.log(`[Employees] Using cached list (${cachedActiveEmployees.length} active)`);
+    return cachedActiveEmployees;
+  }
+
+  console.log('[Employees] Fetching active employees from Meevo...');
+  try {
+    const response = await axios.get(
+      `${CONFIG.API_URL}/employees?tenantid=${CONFIG.TENANT_ID}&locationid=${CONFIG.LOCATION_ID}&ItemsPerPage=100`,
+      { headers: { 'Authorization': `Bearer ${authToken}`, 'Accept': 'application/json' }, timeout: 5000 }
+    );
+
+    const employees = response.data?.data || [];
+
+    // Filter: ObjectState 2026 = Active, exclude test accounts
+    cachedActiveEmployees = employees
+      .filter(emp => emp.objectState === 2026)
+      .filter(emp => !['home', 'training', 'test'].includes((emp.firstName || '').toLowerCase()))
+      .map(emp => ({
+        id: emp.id,
+        name: emp.nickname || emp.firstName,
+        nickname: emp.nickname || emp.firstName
+      }));
+
+    // Build name-to-ID map (lowercase keys)
+    cachedStylistMap = {};
+    for (const emp of cachedActiveEmployees) {
+      const name = (emp.name || '').toLowerCase();
+      cachedStylistMap[name] = emp.id;
+    }
+
+    employeeCacheExpiry = Date.now() + EMPLOYEE_CACHE_TTL;
+    console.log(`[Employees] Cached ${cachedActiveEmployees.length} active employees`);
+    return cachedActiveEmployees;
+  } catch (err) {
+    console.error('[Employees] Fetch failed:', err.message);
+    return cachedActiveEmployees || [];
+  }
+}
 
 // PRODUCTION Service IDs (Phoenix Encanto)
 const SERVICE_MAP = {
@@ -98,53 +97,12 @@ const SERVICE_MAP = {
   'beard_trim': '65ee2a0d-e995-4d8d-a286-ac150106994b'
 };
 
-// All stylists for display purposes (37 stylists - updated Jan 2026)
-const ALL_STYLISTS = [
-  // Original 18 stylists
-  { id: '159793cd-bf26-4574-afcd-ac08017f2cf8', name: 'Josh', nickname: 'Josh' },
-  { id: '2383ab00-8d63-4dac-9945-ac29014110eb', name: 'Jacob', nickname: 'Jacob' },
-  { id: '2044a8ce-be0d-4244-8c01-ac47010a2b18', name: 'Francis', nickname: 'Francis' },
-  { id: '45362667-7c72-4c54-9b56-ac5b00f44d1b', name: 'Tiffany', nickname: 'Tiffany' },
-  { id: '1b0119a5-abe8-444b-b56f-ac5b011095dc', name: 'Ashley', nickname: 'Ashley' },
-  { id: '71fa4533-7c1b-4195-89ed-ac5b0142182d', name: 'Libby', nickname: 'Libby' },
-  { id: 'fe734b90-c392-48b5-ba4d-ac5b015d71ab', name: 'Lily', nickname: 'Lily' },
-  { id: '4f185d55-4c46-4fea-bb3c-ac5b0171e6ce', name: 'Frank', nickname: 'Frank' },
-  { id: '665c58c6-d8f3-4c0c-bfaf-ac5d0004b488', name: 'Britt', nickname: 'Britt' },
-  { id: 'ee0adc0b-79de-4de9-8fd3-ac5d013c23eb', name: 'Angie', nickname: 'Angie' },
-  { id: '8e916437-8d28-432b-b177-ac5e00dff9b9', name: 'Keren', nickname: 'Keren' },
-  { id: '9b36f80e-0857-4fc6-ad42-ac5e00e6e8d7', name: 'Mari', nickname: 'Mari' },
-  { id: 'f8567bde-87b8-4c3a-831e-ac61015f751b', name: 'Saskie', nickname: 'Saskie' },
-  { id: 'a7ef7d83-28d7-4bf5-a934-ac6f011cd3c4', name: 'Melanie', nickname: 'Melanie' },
-  { id: 'cbdbf3d3-0531-464f-996b-ac870143b967', name: 'Sarah', nickname: 'Sarah' },
-  { id: '5dc967f1-8606-4696-9871-ad4f0110cb33', name: 'Kristina', nickname: 'Kristina' },
-  { id: '452b3db2-0e3d-42bb-824f-ad5700082962', name: 'Kristen', nickname: 'Kristen' },
-  { id: '1875e266-ba30-48a5-ab3b-ad670141b4d0', name: 'Danielle', nickname: 'Danielle' },
-  // 19 NEW stylists added Jan 2026
-  { id: '8b243661-a884-4b9d-8223-ad95012b64dd', name: 'Ellie', nickname: 'Ellie' },
-  { id: '0ab425dd-7614-4b3e-90bf-adcd00f6e969', name: 'Bella', nickname: 'Bella' },
-  { id: '9c873dfb-b582-4132-a5fe-ae54006282f3', name: 'Holly', nickname: 'Holly' },
-  { id: '04fa6efa-0a7a-4875-abb3-ae6e010d925c', name: 'Jackie', nickname: 'Jackie' },
-  { id: 'f800b8c0-5ecc-48c3-81a6-aeec010f012a', name: 'Mano', nickname: 'Mano' },
-  { id: '01705d4b-597c-48b2-9391-af7e012ff596', name: 'Jackiev', nickname: 'Jackiev' },
-  { id: 'f1c51a77-6b6f-4ca1-8780-afd9011cf4e9', name: 'Bianca', nickname: 'Bianca' },
-  { id: '389c987f-c7b6-43ac-9cb1-afe3013911ef', name: 'Maricruz', nickname: 'Maricruz' },
-  { id: 'a566f6d7-62fa-417b-9032-afe70120760e', name: 'Dawnele', nickname: 'Dawnele' },
-  { id: 'e3fe57d4-5745-4f9c-bc93-afe8013d1e40', name: 'Harmony', nickname: 'Harmony' },
-  { id: '2a543a56-c40f-492c-a2b8-b07b01099ed2', name: 'MJ', nickname: 'MJ' },
-  { id: '49185114-423f-4c8a-a52e-b0c00129a9e8', name: 'Hannah', nickname: 'Hannah' },
-  { id: 'a1773d20-8d64-43e1-8cb5-b1560127614b', name: 'Jocelyn', nickname: 'Jocelyn' },
-  { id: '56f120d3-a76f-43bc-902e-b19f004114a6', name: 'Ulises', nickname: 'Ulises' },
-  { id: '466345e1-6b4c-4028-98e3-b1c6011a6d36', name: 'Anahi', nickname: 'Anahi' },
-  { id: '60aadea7-4962-47ef-97f9-b237011c85e1', name: 'Juan', nickname: 'Juan' },
-  { id: '3971a6d5-5746-4f30-bdc4-b265013f8707', name: 'Lauren', nickname: 'Lauren' },
-  { id: '6c52327c-3aa4-427e-b83a-b26c01410025', name: 'Eunice', nickname: 'Eunice' },
-  { id: '097168c0-322c-40b2-a1d7-b28b011bae31', name: 'Nadia', nickname: 'Nadia' }
-];
-
 function resolveStylistId(input) {
   if (!input) return null;
+  // If already a UUID, return as-is
   if (input.includes('-') && input.length > 30) return input;
-  return STYLIST_MAP[input.toLowerCase().trim()] || null;
+  // Look up in cached map
+  return (cachedStylistMap || {})[input.toLowerCase().trim()] || null;
 }
 
 function resolveServiceId(input) {
@@ -154,7 +112,11 @@ function resolveServiceId(input) {
 }
 
 function getStylistById(id) {
-  return ALL_STYLISTS.find(s => s.id === id);
+  return (cachedActiveEmployees || []).find(s => s.id === id);
+}
+
+function getAvailableStylistNames() {
+  return (cachedActiveEmployees || []).map(e => e.nickname || e.name);
 }
 
 // ============================================
@@ -295,6 +257,10 @@ app.post('/check', async (req, res) => {
     location_id
   } = req.body;
 
+  // Get active employees first (cached for 1 hour) - needed for name resolution
+  const authToken = await getToken();
+  await getActiveEmployees(authToken);
+
   const locationId = location_id || CONFIG.LOCATION_ID;
 
   // Resolve stylist
@@ -303,7 +269,7 @@ app.post('/check', async (req, res) => {
     return res.json({
       success: false,
       error: 'Missing or invalid stylist. Provide stylist_id (UUID) or stylist_name',
-      available_stylists: ALL_STYLISTS.map(s => s.nickname || s.name)
+      available_stylists: getAvailableStylistNames()
     });
   }
 
@@ -347,8 +313,6 @@ app.post('/check', async (req, res) => {
   console.log(`Date range: ${startDate} to ${endDate}`);
 
   try {
-    const authToken = await getToken();
-
     // Check this stylist's availability for EACH service
     const availabilityByService = {};
 
@@ -474,13 +438,18 @@ app.get('/health', (req, res) => {
     environment: 'PRODUCTION',
     location: 'Phoenix Encanto',
     service: 'Check Group Stylist Availability',
-    version: '1.1.0',
+    version: '2.0.0',
     description: 'Check specific stylist availability for multiple services (group back-to-back bookings)',
-    features: ['formatted date fields (day_of_week, formatted_date, formatted_time, formatted_full)']
+    features: [
+      'DYNAMIC active employee fetching (1-hour cache)',
+      'formatted date fields (day_of_week, formatted_date, formatted_time, formatted_full)'
+    ],
+    stylists: 'dynamic (fetched from Meevo API)'
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`PRODUCTION Check Group Stylist Availability listening on port ${PORT}`);
+  console.log('Active stylists fetched dynamically from Meevo API (1-hour cache)');
 });
