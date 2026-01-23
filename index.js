@@ -189,54 +189,77 @@ async function getToken() {
   return token;
 }
 
+// Use smaller 3-hour time windows to bypass Meevo's 8-slot limit
+const TIME_WINDOWS = [
+  { start: '00:00', end: '09:00' },
+  { start: '09:00', end: '12:00' },
+  { start: '12:00', end: '15:00' },
+  { start: '15:00', end: '18:00' },
+  { start: '18:00', end: '21:00' },
+  { start: '21:00', end: '23:59' }
+];
+
 async function scanStylistForService(authToken, stylistId, serviceId, startDate, endDate, locationId) {
-  const scanRequest = {
-    LocationId: parseInt(locationId),
-    TenantId: parseInt(CONFIG.TENANT_ID),
-    ScanDateType: 1,
-    StartDate: startDate,
-    EndDate: endDate,
-    ScanTimeType: 1,
-    StartTime: '00:00',
-    EndTime: '23:59',
-    ScanServices: [{ ServiceId: serviceId, EmployeeIds: [stylistId] }]
-  };
+  // Scan all time windows in parallel
+  const windowScans = TIME_WINDOWS.map(async (window) => {
+    const scanRequest = {
+      LocationId: parseInt(locationId),
+      TenantId: parseInt(CONFIG.TENANT_ID),
+      ScanDateType: 1,
+      StartDate: startDate,
+      EndDate: endDate,
+      ScanTimeType: 1,
+      StartTime: window.start,
+      EndTime: window.end,
+      ScanServices: [{ ServiceId: serviceId, EmployeeIds: [stylistId] }]
+    };
 
-  try {
-    const response = await axios.post(
-      `${CONFIG.API_URL_V2}/scan/openings?TenantId=${CONFIG.TENANT_ID}&LocationId=${locationId}`,
-      scanRequest,
-      {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
+    try {
+      const response = await axios.post(
+        `${CONFIG.API_URL_V2}/scan/openings?TenantId=${CONFIG.TENANT_ID}&LocationId=${locationId}`,
+        scanRequest,
+        {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
+      );
 
-    const rawData = response.data?.data || [];
-    return rawData.flatMap(item =>
-      (item.serviceOpenings || []).map(slot => {
-        const dateParts = formatDateParts(slot.startTime);
-        const formattedTime = formatTime(slot.startTime);
-        return {
-          startTime: slot.startTime,
-          endTime: slot.endTime,
-          date: slot.date,
-          serviceId: slot.serviceId,
-          serviceName: slot.serviceName,
-          price: slot.employeePrice,
-          day_of_week: dateParts.day_of_week,
-          formatted_date: dateParts.formatted_date,
-          formatted_time: formattedTime,
-          formatted_full: `${dateParts.formatted_full_date} at ${formattedTime}`
-        };
-      })
-    );
-  } catch (error) {
-    console.error(`PRODUCTION: Error scanning stylist:`, error.message);
-    return [];
-  }
+      const rawData = response.data?.data || [];
+      return rawData.flatMap(item =>
+        (item.serviceOpenings || []).map(slot => {
+          const dateParts = formatDateParts(slot.startTime);
+          const formattedTime = formatTime(slot.startTime);
+          return {
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            date: slot.date,
+            serviceId: slot.serviceId,
+            serviceName: slot.serviceName,
+            price: slot.employeePrice,
+            day_of_week: dateParts.day_of_week,
+            formatted_date: dateParts.formatted_date,
+            formatted_time: formattedTime,
+            formatted_full: `${dateParts.formatted_full_date} at ${formattedTime}`
+          };
+        })
+      );
+    } catch (error) {
+      console.error(`PRODUCTION: Error scanning stylist (${window.start}-${window.end}):`, error.message);
+      return [];
+    }
+  });
+
+  const windowResults = await Promise.all(windowScans);
+
+  // Combine and deduplicate by startTime
+  const seenTimes = new Set();
+  return windowResults.flat().filter(slot => {
+    if (seenTimes.has(slot.startTime)) return false;
+    seenTimes.add(slot.startTime);
+    return true;
+  }).sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 }
 
 /**
@@ -438,11 +461,12 @@ app.get('/health', (req, res) => {
     environment: 'PRODUCTION',
     location: 'Phoenix Encanto',
     service: 'Check Group Stylist Availability',
-    version: '2.0.0',
+    version: '2.1.0',
     description: 'Check specific stylist availability for multiple services (group back-to-back bookings)',
     features: [
       'DYNAMIC active employee fetching (1-hour cache)',
-      'formatted date fields (day_of_week, formatted_date, formatted_time, formatted_full)'
+      'formatted date fields (day_of_week, formatted_date, formatted_time, formatted_full)',
+      'full slot retrieval (6 parallel 3-hour scans to bypass 8-slot API limit)'
     ],
     stylists: 'dynamic (fetched from Meevo API)'
   });
